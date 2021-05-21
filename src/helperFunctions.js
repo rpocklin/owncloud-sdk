@@ -10,6 +10,7 @@ const SignUrl = require('./owncloud-sign-url')
 
 class helpers {
   constructor () {
+    this.axios = axios.create({})
     this.OCS_BASEPATH = 'ocs/v1.php/'
     this.OCS_BASEPATH_V2 = 'ocs/v2.php/'
     this.OCS_SERVICE_SHARE = 'apps/files_sharing/api/v1'
@@ -35,6 +36,7 @@ class helpers {
     this._versionNumber = null
     this._currentUser = null
     this._signingKey = null
+    this._authInterceptor = null
     this.fetch = fetch
   }
 
@@ -53,7 +55,7 @@ class helpers {
   }
 
   noAuth () {
-    axios.interceptors.request.use(config => {
+    this.axios.interceptors.request.use(config => {
       config.extraReqParams = config.extraReqParams || {}
       config.extraReqParams.dontUseDefaultAuth = true
       return config
@@ -66,16 +68,22 @@ class helpers {
    */
   setAuthorization (authHeader) {
     this._authHeader = authHeader
-    axios.interceptors.request.use(config => {
-      if (config.extraReqParams && config.extraReqParams.dontUseDefaultAuth) {
-        delete config.extraReqParams.dontUseDefaultAuth
+
+    if (authHeader === null) {
+      this.axios.interceptors.request.eject(this._authInterceptor)
+    } else {
+      this._authInterceptor = this.axios.interceptors.request.use(config => {
+        if (config.extraReqParams && config.extraReqParams.dontUseDefaultAuth) {
+          delete config.extraReqParams.dontUseDefaultAuth
+          return config
+        }
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          config.headers.Authorization = authHeader
+          return config
+        }
         return config
-      }
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        config.headers.Authorization = authHeader
-      }
-      return config
-    })
+      })
+    }
   }
 
   getAuthorization () {
@@ -253,10 +261,13 @@ class helpers {
     }
 
     return new Promise((resolve, reject) => {
+      console.log(this.instance + path)
+
       fetch(this.instance + path, {
         method: method,
         body: options.body,
-        headers: headers
+        headers: headers,
+        credentials: 'omit'
       })
         .then(res => {
           if (res.status >= 400) {
@@ -270,7 +281,11 @@ class helpers {
           try {
             tree = parser.xml2js(body)
           } catch (e) {
-            tree = JSON.parse(body)
+            try {
+              tree = JSON.parse(body)
+            } catch (e) {
+              reject(e)
+            }
           }
           if ('message' in tree) {
             reject(tree.message)
